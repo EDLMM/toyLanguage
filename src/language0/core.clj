@@ -157,57 +157,58 @@
         (let[instrs (instaparse.core/transform compiling ast)
             generate-prog (fn[mv] (reduce generate-instr mv instrs))]
           (compiled n-args class-name generate-prog))))
-
-  (def lang0-compiling
-    (assoc addmult-compiling
-          :varget #(vector [:load %])
-          :assig (fn[var instrs](conj instrs [:store var]))))
-  (use 'clojure.set)
-  ;; helper function that replaces all the values in map m with the given value v
-  (defn replace-vals [m v]
-    (into {} (map vector (keys m) (repeat v ))))
   
-  ;; in this transformation, the ast after parsing would be modified.
-  ;; the vector of keyword :varget will change as:
-  ;; [:varget [:varname variable_name]] =>[:varget variable_number]
-  ;; the variable_number to the variable_name is a bijection function
-  ;; the value assignment keyword will be inserted with extra value: variable_number
-  (defn to-numeric-vars[nb-args ast]
-    (let[varnames ;;transform 
-        (instaparse.core/transform
-          (assoc (replace-vals ;; (assosc map key value) will update the value under the same keyword
-                  lang0-compiling
-                  (fn[& instrs] (apply clojure.set/union (filter set? instrs))))
-            :varname (fn[varname]#{varname}) ;; use :varname to get all the varname values with map destructing
-          )
-        ast)
-        name->num (into {} (map vector varnames (iterate inc nb-args)))] ;; assign a number to a variable
-      (instaparse.core/transform {:varname #(get name->num %)} ast)))
-  (defmethod generate-instr :load [mv [instr & args]]
-    (doto mv
-      (.visitVarInsn Opcodes/ILOAD (int (first args)))))
-  (defmethod generate-instr :store [mv [instr & args]]
-    (doto mv
-      (.visitInsn Opcodes/DUP)
-      (.visitVarInsn Opcodes/ISTORE (int (first args)))))
-  
+  ;; language 0 compiler
+    (def lang0-compiling
+      (assoc addmult-compiling
+            :varget #(vector [:load %])
+            :assig (fn[var instrs](conj instrs [:store var]))))
+    (use 'clojure.set)
+    ;; helper function that replaces all the values in map m with the given value v
+    (defn replace-vals [m v]
+      (into {} (map vector (keys m) (repeat v ))))
+    
+    ;; in this transformation, the ast after parsing would be modified.
+    ;; the vector of keyword :varget will change as:
+    ;; [:varget [:varname variable_name]] =>[:varget variable_number]
+    ;; the variable_number to the variable_name is a bijection function
+    ;; the value assignment keyword will be inserted with extra value: variable_number
+    (defn to-numeric-vars[nb-args ast]
+      (let[varnames ;;transform 
+          (instaparse.core/transform
+            (assoc (replace-vals ;; (assosc map key value) will update the value under the same keyword
+                    lang0-compiling
+                    (fn[& instrs] (apply clojure.set/union (filter set? instrs))))
+              :varname (fn[varname]#{varname}) ;; use :varname to get all the varname values with map destructing
+            )
+          ast)
+          name->num (into {} (map vector varnames (iterate inc nb-args)))] ;; assign a number to a variable
+        (instaparse.core/transform {:varname #(get name->num %)} ast)))
+    (defmethod generate-instr :load [mv [instr & args]]
+      (doto mv
+        (.visitVarInsn Opcodes/ILOAD (int (first args)))))
+    (defmethod generate-instr :store [mv [instr & args]]
+      (doto mv
+        (.visitInsn Opcodes/DUP)
+        (.visitVarInsn Opcodes/ISTORE (int (first args)))))
+    
   ;; language 1 starts here
-  ;;count and return the number of arguments
-  (defn nb-args[ast]
-    (inc (instaparse.core/transform (assoc (replace-vals
-                            lang0-compiling (fn[& args]
-                                              (apply max (conj (filter number? args)
-                                                                -1))))
-                            :argument #(Integer/parseInt %))
-                    ast)))
-  ;;  replace the :argument nodes with the value of the argument number:
-  (defn args->varnum[ast]
-    (instaparse.core/transform {:argument #(Integer/parseInt %)} ast))
+    ;;count and return the number of arguments
+    (defn nb-args[ast]
+      (inc (instaparse.core/transform (assoc (replace-vals
+                              lang0-compiling (fn[& args]
+                                                (apply max (conj (filter number? args)
+                                                                  -1))))
+                              :argument #(Integer/parseInt %))
+                      ast)))
+    ;;  replace the :argument nodes with the value of the argument number:
+    (defn args->varnum[ast]
+      (instaparse.core/transform {:argument #(Integer/parseInt %)} ast))
 
-  (defn lang1-compiler-chain[class-name ast]
-    (let[n-args (nb-args ast)
-        compiler (dispatching-bytecode-generating-eval n-args class-name lang0-compiling)]
-      (->> ast args->varnum (to-numeric-vars n-args) compiler)))
+    (defn lang1-compiler-chain[class-name ast]
+      (let[n-args (nb-args ast)
+          compiler (dispatching-bytecode-generating-eval n-args class-name lang0-compiling)]
+        (->> ast args->varnum (to-numeric-vars n-args) compiler)))
 
 (defn -main [& args]
   ;; language 0 test
