@@ -43,10 +43,10 @@
     (instaparse.core/parser
     "prog = (expr-space|if-flow)*
         
-        if-flow = spaces <'if'> condition true-case [false-case]
-        condition = spaces <'('> spaces expr spaces <')'> spaces
-        true-case = spaces <'{'> expr-space <'}'> spaces
-        false-case = spaces <'else'> spaces <'{'> expr-space <'}'> spaces
+        if-flow = spaces <'if'> condition true-case [false-case] <';'> spaces
+        <condition> = spaces <'('> spaces expr spaces <')'> spaces
+        <true-case> = spaces <'{'> expr-space <'}'> spaces
+        <false-case> = spaces <'else'> spaces <'{'> expr-space <'}'> spaces
         
         <expr-space> = spaces expr spaces <';'> spaces
         <expr> = assig | add-sub
@@ -87,13 +87,27 @@
     :varname #(assoc env :_ret (keyword %))
     :varget (fn [{varname :_ret :as env1}]
               (assoc env1 :_ret (varname env1)))})
+  ;;NOTE: update for language 1 here
+  ;; update the tranformation map  
+  (defn make-lang1-instr-interpreting [env]
+    (assoc (make-lang0-instr-interpreting env)
+          :argument #(assoc env :_ret (keyword (str "%" %)))))
+  ;;FIXME: how to deal with else case?
+  ;; add if flow control for the transformation map
+  (defn make-lang-if-instr-interpreting [env]
+    (assoc (make-lang1-instr-interpreting env) ;; what if not false-case
+        :if-flow (fn [{v1 :_ret :as env1} {v2 :_ret :as env2} {v3 :_ret :as env3}]
+                    (assoc (merge env1 env2 env3)
+                      :_ret (str v1 " " v2 " " v3)
+                    )
+                  )
+    )
+  ) 
   ;; dynamic evaluation for reusing
   (defn dynamic-eval [interpreter]
     (fn[ast]
       (fn[]
         (instaparse.core/transform interpreter ast))))
-
-  ;;NOTE: update for language 1 here
   ;; add the arguments to AST
   (defn args-to-env[args]
     (into {} (map-indexed #(vector (keyword (str "%" %1)) %2) args)))
@@ -104,11 +118,6 @@
                                             (assoc (args-to-env args)
                                                   :_ret 0))
                         ast))))
-  ;; update the tranformation map  
-  (defn make-lang1-instr-interpreting [env]
-    (assoc (make-lang0-instr-interpreting env)
-          :argument #(assoc env :_ret (keyword (str "%" %)))))
-
 ;; compiler
   ;; import asm package
     ;; NOTE: blackbox here
@@ -254,12 +263,18 @@
   ; (def lang1-interpret-test (->> "a=%0;a + %1 *3;" lang1-parser lang1-interpret))
   ; (println (lang1-interpret-test 2 3))
   ; ; test of the nb-args function
-  ; ; (println (->> "a=%0;a + %1 *3;" lang1-parser nb-args))
+  ; (println (->> "a=%0;a + %1 *3;" lang1-parser nb-args))
   ; (def lang1-compiler-test (->> "a=%0;a + %1 *3;" lang1-parser (lang1-compiler-chain "Lang1Compiler")))
   ; (println (lang1-compiler-test 2 5))
 
+  ;; lang-if
   ; (println (lang1-parser "a=%0;a + %1 *3;" 2 3))
   ; (insta/visualize (lang1-parser "a=%0;a + %1 *3;" 2 3) :output-file "resources/lang1parser.png" :options{:dpi 150})
-  (insta/visualize (lang-if-parser "a=%0;a + %1 *3;if(1 +3 ) { d=100; }" 2 3) :output-file "resources/if1.png" :options{:dpi 150})
-  (insta/visualize (lang-if-parser "a=%0;a + %1 *3;if( 0) { d=100; } else { 2;}" 2 3) :output-file "resources/if2.png" :options{:dpi 150})
+  ; (insta/visualize (lang-if-parser "a=%0;a + %1 *3;if(1 +3 ) { d=100; };" 2 3) :output-file "resources/if1.png" :options{:dpi 150})
+  ; (insta/visualize (lang-if-parser "a=%0;a + %1 *3;if( 0) { d=100; } else { 2;};" 2 3) :output-file "resources/if2.png" :options{:dpi 150})
+  
+  (def lang-if-interpret (dynamic-eval-args make-lang-if-instr-interpreting))
+  (def lang-if-interpret-test (->> "a=0;a + 1 *3;b=4 ; if(a +1 +3 ) { d=100/b; } else { 2;};" lang-if-parser lang-if-interpret))
+  ; (def lang-if-interpret-test (->> "a=%0;a + %1 *3 ; if(1 +3 ) { d=100; };" lang-if-parser lang-if-interpret))
+  (println (lang-if-interpret-test))
 )
