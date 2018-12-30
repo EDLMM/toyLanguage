@@ -39,7 +39,32 @@
         varget = varname | argument
         varname = #'[a-zA-Z]\\w*'
         argument= <'%'>#'[0-9]+'"))
-
+  (def lang-if-parser;        
+    (instaparse.core/parser
+    "prog = (expr-space|if-flow)*
+        
+        if-flow = spaces <'if'> condition true-case [false-case]
+        condition = spaces <'('> spaces expr spaces <')'> spaces
+        true-case = spaces <'{'> expr-space <'}'> spaces
+        false-case = spaces <'else'> spaces <'{'> expr-space <'}'> spaces
+        
+        <expr-space> = spaces expr spaces <';'> spaces
+        <expr> = assig | add-sub
+        assig = varname spaces <'='> spaces expr
+        <add-sub> = mult-div | add | sub
+        add = add-sub spaces <'+'> spaces mult-div
+        sub = add-sub spaces <'-'> spaces mult-div
+        <mult-div> = factor | mult |div
+        mult = mult-div spaces <'*'> spaces factor
+        div = mult-div spaces <'/'> spaces factor
+        <factor> = number | <'('> spaces expr spaces <')'> | varget |assig
+        <spaces> = <#'\\s*'>
+        number = #'-?[0-9]+'
+        varget = varname | argument
+        varname = #'[a-zA-Z]\\w*'
+        argument= <'%'>#'[0-9]+'"
+    )
+  )
 ;; interpreter
   (defn make-interpreting [make-instr-interpreting init-env]
     {:prog (fn [& instrs] (:_ret (reduce
@@ -225,11 +250,16 @@
     ; (def lang0-compiler-test (->> "a=1 + 3 * (-2 - 1);b= 0 - a; b=b-a;" lang0-parser (to-numeric-vars 0) lang0-compiler))
     ; (println (lang0-compiler-test))
 
-  (def lang1-interpret (dynamic-eval-args make-lang1-instr-interpreting))
-  (def lang1-interpret-test (->> "a=%0;a + %1 *3;" lang1-parser lang1-interpret))
-  (println (lang1-interpret-test 2 3))
-  ; test of the nb-args function
-  ; (println (->> "a=%0;a + %1 *3;" lang1-parser nb-args))
-  (def lang1-compiler-test (->> "a=%0;a + %1 *3;" lang1-parser (lang1-compiler-chain "Lang1Compiler")))
-  (println (lang1-compiler-test 2 5))
+  ; (def lang1-interpret (dynamic-eval-args make-lang1-instr-interpreting))
+  ; (def lang1-interpret-test (->> "a=%0;a + %1 *3;" lang1-parser lang1-interpret))
+  ; (println (lang1-interpret-test 2 3))
+  ; ; test of the nb-args function
+  ; ; (println (->> "a=%0;a + %1 *3;" lang1-parser nb-args))
+  ; (def lang1-compiler-test (->> "a=%0;a + %1 *3;" lang1-parser (lang1-compiler-chain "Lang1Compiler")))
+  ; (println (lang1-compiler-test 2 5))
+
+  ; (println (lang1-parser "a=%0;a + %1 *3;" 2 3))
+  ; (insta/visualize (lang1-parser "a=%0;a + %1 *3;" 2 3) :output-file "resources/lang1parser.png" :options{:dpi 150})
+  (insta/visualize (lang-if-parser "a=%0;a + %1 *3;if(1 +3 ) { d=100; }" 2 3) :output-file "resources/if1.png" :options{:dpi 150})
+  (insta/visualize (lang-if-parser "a=%0;a + %1 *3;if( 0) { d=100; } else { 2;}" 2 3) :output-file "resources/if2.png" :options{:dpi 150})
 )
