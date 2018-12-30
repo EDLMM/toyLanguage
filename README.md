@@ -1,6 +1,8 @@
-# language0
+# Toy Language
 
-A Clojure library designed to ... well, that part is up to you.
+A toy language for homework project, based on Clojure language.
+
+Here instapasre and ASM pacakge are used.
 
 ## Usage
 
