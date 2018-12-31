@@ -41,9 +41,10 @@
         argument= <'%'>#'[0-9]+'"))
   (def lang-if-parser;        
     (instaparse.core/parser
-    "prog = (expr-space|if-flow)*
+    "prog = (expr-space|if-flow|if-else-flow)*
         
-        if-flow = spaces <'if'> condition true-case [false-case] <';'> spaces
+        if-flow = spaces <'if'> condition true-case <';'> spaces
+        if-else-flow = spaces <'if'> condition true-case false-case <';'> spaces
         <condition> = spaces <'('> spaces expr spaces <')'> spaces
         <true-case> = spaces <'{'> expr-space <'}'> spaces
         <false-case> = spaces <'else'> spaces <'{'> expr-space <'}'> spaces
@@ -96,9 +97,14 @@
   ;; add if flow control for the transformation map
   (defn make-lang-if-instr-interpreting [env]
     (assoc (make-lang1-instr-interpreting env) ;; what if not false-case
-        :if-flow (fn [{v1 :_ret :as env1} {v2 :_ret :as env2} {v3 :_ret :as env3}]
+        :if-flow (fn [{v1 :_ret :as env1} {v2 :_ret :as env2}]; {v3 :_ret :as env3}
+                    (assoc (merge env1 env2); env3
+                      :_ret (if (false? (zero? v1)) v2);" " v3
+                    )
+                  )
+        :if-else-flow (fn [{v1 :_ret :as env1} {v2 :_ret :as env2} {v3 :_ret :as env3}]
                     (assoc (merge env1 env2 env3)
-                      :_ret (str v1 " " v2 " " v3)
+                      :_ret (if (zero? v1) v3 v2)
                     )
                   )
     )
@@ -274,7 +280,9 @@
   ; (insta/visualize (lang-if-parser "a=%0;a + %1 *3;if( 0) { d=100; } else { 2;};" 2 3) :output-file "resources/if2.png" :options{:dpi 150})
   
   (def lang-if-interpret (dynamic-eval-args make-lang-if-instr-interpreting))
-  (def lang-if-interpret-test (->> "a=0;a + 1 *3;b=4 ; if(a +1 +3 ) { d=100/b; } else { 2;};" lang-if-parser lang-if-interpret))
-  ; (def lang-if-interpret-test (->> "a=%0;a + %1 *3 ; if(1 +3 ) { d=100; };" lang-if-parser lang-if-interpret))
-  (println (lang-if-interpret-test))
+
+  (def lang-if-interpret-test (->> "a=%0;a + %1 *3 ; if(1 +3 ) { d=100;};" lang-if-parser lang-if-interpret))
+  (println (lang-if-interpret-test 2 3))
+  (def lang-if-else-interpret-test (->> "a=0;a + 1 *3;b=4 ; if(c=0) { d=100/b ;}else{2;};" lang-if-parser lang-if-interpret))
+  (println (lang-if-else-interpret-test))
 )
