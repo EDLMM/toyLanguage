@@ -203,6 +203,15 @@
       (assoc addmult-compiling
             :varget #(vector [:load %])
             :assig (fn[var instrs](conj instrs [:store var]))))
+    ;; NOTE:language if-else compiling
+    (def lang-if-compiling
+      (assoc lang0-compiling
+            :if-flow (fn[var instrs](conj instrs [:if var]))
+            :if-else-flow (fn [condition t-case f-case]
+                            (conj condition [:t-case t-case] [:f-case f-case])
+                          )
+      ))
+
     (use 'clojure.set)
     ;; helper function that replaces all the values in map m with the given value v
     (defn replace-vals [m v]
@@ -217,9 +226,12 @@
       (let[varnames ;;transform 
           (instaparse.core/transform
             (assoc (replace-vals ;; (assosc map key value) will update the value under the same keyword
-                    lang0-compiling
+                    ;;FIXME: change the compiling here
+                    ;;every time add new flow control
+                    ;;or the varname will not be replace
+                    lang-if-compiling
                     (fn[& instrs] (apply clojure.set/union (filter set? instrs))))
-              :varname (fn[varname]#{varname}) ;; use :varname to get all the varname values with map destructing
+              :varname (fn [varname] #{varname}) ;; use :varname to get all the varname values with map destructing
             )
           ast)
           name->num (into {} (map vector varnames (iterate inc nb-args)))] ;; assign a number to a variable
@@ -250,6 +262,7 @@
           compiler (dispatching-bytecode-generating-eval n-args class-name lang0-compiling)]
         (->> ast args->varnum (to-numeric-vars n-args) compiler)))
 
+
 (defn -main [& args]
   ;; language 0 test
     ; (println (lang0-parser "a=1+1*3;b=a-2; a+b;"))
@@ -277,7 +290,9 @@
   ; (println (lang1-parser "a=%0;a + %1 *3;" 2 3))
   ; (insta/visualize (lang1-parser "a=%0;a + %1 *3;" 2 3) :output-file "resources/lang1parser.png" :options{:dpi 150})
   ; (insta/visualize (lang-if-parser "a=%0;a + %1 *3;if(1 +3 ) { d=100; };" 2 3) :output-file "resources/if1.png" :options{:dpi 150})
+  
   ; (insta/visualize (lang-if-parser "a=%0;a + %1 *3;if( 0) { d=100; } else { 2;};" 2 3) :output-file "resources/if2.png" :options{:dpi 150})
+  (println (->> "a=%0;a + %1 *3;if( 0) { b=100; } else { 2;};" lang-if-parser (to-numeric-vars 0)))
   
   (def lang-if-interpret (dynamic-eval-args make-lang-if-instr-interpreting))
 
@@ -285,4 +300,8 @@
   (println (lang-if-interpret-test 2 3))
   (def lang-if-else-interpret-test (->> "a=0;a + 1 *3;b=4 ; if(c=0) { d=100/b ;}else{2;};" lang-if-parser lang-if-interpret))
   (println (lang-if-else-interpret-test))
+
+  (println (->> "a=0;a + 1 *3;b=4 ; if(c=0) { d=100/b ;}else{2;};" lang-if-parser (to-numeric-vars 0) (instaparse.core/transform lang-if-compiling)))
+  ; test of the nb-args function
+  (println (->>  "a=0;a + 1 *3;b=4 ; if(c=0) { d=100/b ;}else{2;};" lang-if-parser nb-args))
 )
