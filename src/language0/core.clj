@@ -4,53 +4,25 @@
     (clojure.asm.commons Method GeneratorAdapter))
   (:gen-class)
 )
-
+(use 'clojure.pprint) 
 ;; parser
-  (def lang0-parser
+  (def lang-if-parser; 
     (instaparse.core/parser
-    "prog = (spaces expr spaces <';'> spaces)*
-      <expr> = assig | add-sub
-      assig = varname spaces <'='> spaces expr
-      <add-sub> = mult-div | add | sub
-      add = add-sub spaces <'+'> spaces mult-div
-      sub = add-sub spaces <'-'> spaces mult-div
-      <mult-div> = factor | mult |div
-      mult = mult-div spaces <'*'> spaces factor
-      div = mult-div spaces <'/'> spaces factor
-      <factor> = number | <'('> spaces expr spaces <')'> | varget |assig
-      <spaces> = <#'\\s*'>
-      number = #'-?[0-9]+'
-      varget = varname
-      varname = #'[a-zA-Z]\\w*'"))
-  (def lang1-parser
-    (instaparse.core/parser
-    "prog = (spaces expr spaces <';'> spaces)*
-        <expr> = assig | add-sub
-        assig = varname spaces <'='> spaces expr
-        <add-sub> = mult-div | add | sub
-        add = add-sub spaces <'+'> spaces mult-div
-        sub = add-sub spaces <'-'> spaces mult-div
-        <mult-div> = factor | mult |div
-        mult = mult-div spaces <'*'> spaces factor
-        div = mult-div spaces <'/'> spaces factor
-        <factor> = number | <'('> spaces expr spaces <')'> | varget |assig
-        <spaces> = <#'\\s*'>
-        number = #'-?[0-9]+'
-        varget = varname | argument
-        varname = #'[a-zA-Z]\\w*'
-        argument= <'%'>#'[0-9]+'"))
-  (def lang-if-parser;        
-    (instaparse.core/parser
-    "prog = (expr-space|if-flow|if-else-flow)*
-        
-        if-flow = spaces <'if'> condition true-case <';'> spaces
-        if-else-flow = spaces <'if'> condition true-case false-case <';'> spaces
+    "prog = (expr-space)*        
+        flag= spaces
+
+        if-flow = spaces <'if'> condition true-case spaces
+        if-else-flow = spaces <'if'> condition true-case flag false-case spaces
         <condition> = spaces <'('> spaces expr spaces <')'> spaces
-        <true-case> = spaces <'{'> expr-space <'}'> spaces
-        <false-case> = spaces <'else'> spaces <'{'> expr-space <'}'> spaces
-        
+        <true-case> = spaces <'{'> (expr-space)* <'}'> spaces
+        <false-case> = spaces <'else'> spaces <'{'> (expr-space)* <'}'> spaces
+
+        while-flow=spaces <'while'> condition true-case spaces
+        for-flow = spaces <'for'> for-condition true-case spaces
+        <for-condition>= spaces <'('> spaces assig spaces <';'> spaces expr spaces <';'> spaces assig spaces <')'> spaces
+
         <expr-space> = spaces expr spaces <';'> spaces
-        <expr> = assig | add-sub
+        <expr> = assig | add-sub | if-flow | if-else-flow | while-flow | for-flow
         assig = varname spaces <'='> spaces expr
         <add-sub> = mult-div | add | sub
         add = add-sub spaces <'+'> spaces mult-div
@@ -64,17 +36,10 @@
         varget = varname | argument
         varname = #'[a-zA-Z]\\w*'
         argument= <'%'>#'[0-9]+'"
-    )
-  )
+    ))
 ;; interpreter
-  (defn make-interpreting [make-instr-interpreting init-env]
-    {:prog (fn [& instrs] (:_ret (reduce
-                                        (fn[env instr]
-                                          (instaparse.core/transform (make-instr-interpreting env) instr))
-                                        init-env
-                                        instrs)))})
-  (defn make-lang0-instr-interpreting [env]
-    { :assig (fn[{varname :_ret :as env1} {value :_ret :as env2}]
+  (defn make-lang0-interpreter [env]
+    {:assig (fn[{varname :_ret :as env1} {value :_ret :as env2}]
               (assoc (merge env1 env2) varname value :_ret value))
     :add (fn[{v1 :_ret :as env1} {v2 :_ret :as env2}]
             (assoc (merge env1 env2) :_ret (+ v1 v2)))
@@ -85,56 +50,149 @@
     :div (fn[{v1 :_ret :as env1} {v2 :_ret :as env2}]
             (assoc (merge env1 env2) :_ret (quot v1 v2)))
     :number #(assoc env :_ret (Integer/parseInt %))
-    :varname #(assoc env :_ret (keyword %))
+    :varname (fn [x] (assoc env :_ret (keyword x)))
     :varget (fn [{varname :_ret :as env1}]
               (assoc env1 :_ret (varname env1)))})
   ;;NOTE: update for language 1 here
   ;; update the tranformation map  
-  (defn make-lang1-instr-interpreting [env]
-    (assoc (make-lang0-instr-interpreting env)
+  (defn make-lang1-interpreter [env]
+    (assoc (make-lang0-interpreter env)
           :argument #(assoc env :_ret (keyword (str "%" %)))))
-  ;;FIXME: how to deal with else case?
+  ;;FIXME: add while and for case
   ;; add if flow control for the transformation map
-  (defn make-lang-if-instr-interpreting [env]
-    (assoc (make-lang1-instr-interpreting env) ;; what if not false-case
-        :if-flow (fn [{v1 :_ret :as env1} {v2 :_ret :as env2}]; {v3 :_ret :as env3}
-                    (assoc (merge env1 env2); env3
-                      :_ret (if (false? (zero? v1)) v2);" " v3
-                    )
-                  )
-        :if-else-flow (fn [{v1 :_ret :as env1} {v2 :_ret :as env2} {v3 :_ret :as env3}]
-                    (assoc (merge env1 env2 env3)
-                      :_ret (if (zero? v1) v3 v2)
-                    )
-                  )
+  (defn condition-eval [env sentence]
+      (let [{stack-ret :_ret} env
+            update-env (instaparse.core/transform (make-lang1-interpreter env) sentence)
+            {cr :_ret} update-env
+            update-env (assoc update-env :_ret stack-ret)]
+          [(not= cr 0) update-env]
+    ))
+  (defn subcase-eval [env sentences] 
+    ; (pprint "subcase env:")
+    ; (pprint env)
+    ; (pprint "subcase instr:")
+    ; (pprint sentences)
+    ; (pprint "----------") 
+      (let [update-env 
+            (reduce 
+              (fn [env instr] (instaparse.core/transform (make-lang1-interpreter env) instr))
+              env
+              sentences
+            )]
+      ; (pprint "subcase output:")
+      ; (pprint update-env)
+      update-env))
+  ;;use to split the cases
+    (defn notflag? [vec]
+      (if (not= vec [:flag]) true false))
+    (defn lazy-to-vec [lz]
+      (into [] (concat lz))
     )
-  ) 
-  ;; dynamic evaluation for reusing
-  (defn dynamic-eval [interpreter]
-    (fn[ast]
-      (fn[]
-        (instaparse.core/transform interpreter ast))))
+    (defn in-split [cs]
+       (let [ mid (split-with notflag? cs)
+             [:as t-case] (first mid)
+             [:as f-case] (rest (second mid))]
+        [t-case f-case]
+       ))
+  (defn get-if-choice [env args]
+    (let [cases (rest args)
+          condition (first cases)
+          [notjump update-env] (condition-eval env condition)
+          t (rest cases)
+          choice (lazy-to-vec (if notjump t [[:number (str (:_ret env))]]))]
+      [update-env choice]))
+  (defn get-if-else-choice [env args]
+    (let [cases (rest args)
+          condition (first cases)
+          [notjump update-env] (condition-eval env condition)
+          [t f] (in-split (rest cases))
+          choice (lazy-to-vec (if notjump t f))
+          ]
+      [update-env choice]))
+  ; (defn )
+  (defn fuck-interpreter [env instr]
+    ; (pprint instr)
+    (let [c (str (first instr))
+          update-env (case c
+            ":assig" (let [{stack-ret :_ret} env
+                          {varname :_ret} (fuck-interpreter env (second instr))
+                          value-env (fuck-interpreter env (get instr 2))
+                          update-env (assoc value-env varname (:_ret value-env))]
+                        update-env
+                      )
+            ":only-assig" (let [{stack-ret :_ret} env
+                          {varname :_ret} (fuck-interpreter env (second instr))
+                          value-env (fuck-interpreter env (get instr 2))
+                          update-env (assoc value-env varname (:_ret value-env))]
+                        (assoc update-env :_ret stack-ret)
+                      )
+            
+            ":if-else-flow" (let [[ifelse-env choice] (get-if-else-choice env instr)]
+                              (reduce fuck-interpreter ifelse-env choice))
+            ":if-flow" (let [[if-env choice] (get-if-choice env instr)]
+                              (reduce fuck-interpreter if-env choice))
+            ":while-flow" (let [condition (get instr 1)
+                                iterations (lazy-to-vec (nthrest instr 2))
+                                env (fuck-interpreter env [:number "0"])
+                                aa (condition-eval env condition)]
+                            (loop [[isRun update-env] aa]
+                              (if (not isRun)
+                                update-env
+                                (recur (condition-eval (reduce fuck-interpreter update-env iterations) condition)))                                     
+                              ))
+            ":for-flow" (let [init-assig (get instr 1)
+                              init-env (fuck-interpreter env init-assig)
+                              condition (get instr 2)
+                              var-update (insta/transform {:assig (fn [& args] (lazy-to-vec (concat [:only-assig] (lazy-to-vec args))))} (get instr 3))
+                              iterations (lazy-to-vec (nthrest instr 4))
+                              ivi (lazy-to-vec (concat iterations [var-update]))                                                                                
+                              env (fuck-interpreter init-env [:number "0"])
+                              aa (condition-eval env condition)]
+                          ; (pprint test-update)
+                          ; (pprint (reduce fuck-interpreter env [test-update]))
+                          (loop [[isRun pre-env] aa]
+                            (if (not isRun)
+                              pre-env
+                              (recur (condition-eval (reduce fuck-interpreter (reduce fuck-interpreter pre-env iterations) ivi) condition)
+                            ))                   
+                        ))
+            (subcase-eval env [instr])) ;TODO: 最后再给while 加默认值
+          ]
+    update-env))
   ;; add the arguments to AST
-  (defn args-to-env[args]
-    (into {} (map-indexed #(vector (keyword (str "%" %1)) %2) args)))
-  (defn dynamic-eval-args [make-interpreter]
-    (fn[ast]
-      (fn[& args]
-        (instaparse.core/transform (make-interpreting make-interpreter
-                                            (assoc (args-to-env args)
-                                                  :_ret 0))
-                        ast))))
+    (defn args-to-env[args]
+      (into {} (map-indexed #(vector (keyword (str "%" %1)) %2) args)))
+    (defn dynamic-eval-args [make-interpreter ast & args] ;TODO: add function for % argument
+      ; (pprint "get args:")
+      ; (pprint args)
+      ; (pprint "result of args-to env:")
+      (def rate (args-to-env args))
+      ; (pprint rate)
+      ; (pprint "result of get sentences:")
+      (def sentences (insta/transform {:prog (fn [& exprs] exprs)} ast))
+      ; (pprint sentences)
+      ; (pprint "--------information-------")
+      ; (pprint "end result:")
+      (def init-env {:_ret 999})
+      (def final-env (reduce fuck-interpreter init-env sentences))
+      ; (pprint final-env)
+      (:_ret final-env)
+    )
+
 ;; compiler
-  ;; import asm package
+  ;; import asm package and generate
     ;; NOTE: blackbox here
-    (import '(clojure.asm Opcodes Type ClassWriter))
+    (import '(clojure.asm Opcodes Type Label ClassWriter));;NOTE: add Label import here
     (import '(clojure.asm.commons Method GeneratorAdapter))
     (defn compiled [n-args class-name bytecode-generator]
-        (let [cw (ClassWriter. (+ ClassWriter/COMPUTE_FRAMES ClassWriter/COMPUTE_MAXS ))
+        (let [cw (ClassWriter. (+ ClassWriter/COMPUTE_FRAMES)); ClassWriter/COMPUTE_MAXS 
               init (Method/getMethod "void <init>()")
               meth-name "run"
+              ;method descriptor here: take n interger argument, return an interger at last
               meth-sig (str "(" (apply str (repeat n-args "I")) ")I")]
+          ;classWriter begin
           (.visit cw Opcodes/V1_6 Opcodes/ACC_PUBLIC (.replace class-name \. \/) nil "java/lang/Object" nil)
+          
           (doto (GeneratorAdapter. Opcodes/ACC_PUBLIC init nil nil cw)
             (.visitCode)
             (.loadThis)
@@ -146,13 +204,15 @@
             (bytecode-generator)
             (.visitMaxs 0 0 )
             (.visitEnd))
+
+          ;classWriter end
           (.visitEnd cw)
           (let [b (.toByteArray cw)
-                cl (clojure.lang.DynamicClassLoader.)]
-            (.defineClass cl class-name b nil))
+                cl (clojure.lang.DynamicClassLoader.)];define a class loader and
+            (.defineClass cl class-name b nil)) ;use the class loader to load the generated class
           (fn [& args] (clojure.lang.Reflector/invokeStaticMethod class-name meth-name (into-array args))))
         )
-  ;; arith compiler
+  ;; arith compiling
     ;; ast -> vector
     ;; use to concatenate the transform rules
     (defn assoc-binary-op [m [op instr]]
@@ -168,11 +228,56 @@
       (reduce assoc-binary-op const-compiling [[:add :addi][:sub :subi]]))
     (def addmult-compiling
       (reduce assoc-binary-op addsub-compiling [[:mult :multi][:div :divi]]))
+  ;; language 0 compiling
+    (def lang0-compiling
+      (assoc addmult-compiling
+            :varget #(vector [:load %])
+            :assig (fn[var instrs](conj instrs [:store var]))))
+   
+  ;; language if-else compiling
+    ;; TODO: 1. updata compiling here 
+    ;; FIXME: only support if call once I guess. Maybe it can name the label with a global counter?
+    
+    (defn combine-ins [vec] 
+      (into [] (reduce concat (first vec) (rest vec)))
+    )
+    (defn split-case [cs]
+       (let [mid (split-with notflag? cs)
+             [:as t-case] (first mid)
+             [:as f-case] (rest (second mid))]
+        [(combine-ins t-case) (combine-ins f-case)]
+       ))
+    
+    (def lang-if-compiling
+      (assoc lang0-compiling
+            :if-flow 
+              (fn [condition t-case]
+                  (def to-end-if-else (new Label))
+                  (into [] (concat condition
+                    [[:ifeq to-end-if-else]] ;skip true case if ==zero
+                    t-case
+                    [[:label to-end-if-else]])))
+            :if-else-flow
+              (fn [condition & both]
+                (let [[t-case f-case] (split-case both)]
+                  (def to-f-case (new Label))
+                  (def to-end-if-else (new Label))
+                  (into [] (concat condition
+                    [[:ifeq to-f-case]] ;skip true case if ==zero
+                    t-case [[:goto to-end-if-else]] 
+                    [[:label to-f-case]] f-case
+                    [[:label to-end-if-else]]));skip false case if execute true case
+                )
 
-    ;; generate byte code
+              ) 
+      ))
+
+
+  ;; generate byte code
     (defmulti generate-instr (fn [mv [instr & args]] instr))
     (defmethod generate-instr :loadi [mv [instr & args]]
       (doto mv
+        ; (.visitInsn (int (first args)))))
         (.visitLdcInsn (int (first args)))))
     (defmethod generate-instr :reti [mv [instr & args]]
       (doto mv
@@ -189,28 +294,34 @@
     (defmethod generate-instr :divi [mv [instr & args]]
       (doto mv
         (.visitInsn Opcodes/IDIV)))
-
+    (defmethod generate-instr :load [mv [instr & args]]
+      (doto mv
+        (.visitVarInsn Opcodes/ILOAD (int (first args)))))
+    (defmethod generate-instr :store [mv [instr & args]]
+      (doto mv
+        (.visitInsn Opcodes/DUP)
+        (.visitVarInsn Opcodes/ISTORE (int (first args)))))
+    ;;TODO: 2. update generate here
+    (defmethod generate-instr :ifeq [mv [instr & args]]
+      (doto mv
+        (.visitJumpInsn Opcodes/IFEQ (first args))))
+    (defmethod generate-instr :goto [mv [instr & args]]
+      (doto mv
+        (.visitJumpInsn Opcodes/GOTO (first args))))  
+    (defmethod generate-instr :label [mv [instr & args]]
+      (doto mv
+        (.visitLabel (first args))
+        (.visitFrame 0 0 nil 0 nil)
+      ))
+    ; (defn insert-label)
     ;; create a compiler that will take an ast as argument
     ;; and return the function created with compiled
     (defn dispatching-bytecode-generating-eval [n-args class-name compiling]
       (fn[ast]
-        (let[instrs (instaparse.core/transform compiling ast)
+        (let[instrs (instaparse.core/transform compiling ast);call compiling to transform parsed program
+            ;FIXME: ADD insert LABEL HERE
             generate-prog (fn[mv] (reduce generate-instr mv instrs))]
           (compiled n-args class-name generate-prog))))
-  
-  ;; language 0 compiler
-    (def lang0-compiling
-      (assoc addmult-compiling
-            :varget #(vector [:load %])
-            :assig (fn[var instrs](conj instrs [:store var]))))
-    ;; NOTE:language if-else compiling
-    (def lang-if-compiling
-      (assoc lang0-compiling
-            :if-flow (fn[var instrs](conj instrs [:if var]))
-            :if-else-flow (fn [condition t-case f-case]
-                            (conj condition [:t-case t-case] [:f-case f-case])
-                          )
-      ))
 
     (use 'clojure.set)
     ;; helper function that replaces all the values in map m with the given value v
@@ -236,15 +347,8 @@
           ast)
           name->num (into {} (map vector varnames (iterate inc nb-args)))] ;; assign a number to a variable
         (instaparse.core/transform {:varname #(get name->num %)} ast)))
-    (defmethod generate-instr :load [mv [instr & args]]
-      (doto mv
-        (.visitVarInsn Opcodes/ILOAD (int (first args)))))
-    (defmethod generate-instr :store [mv [instr & args]]
-      (doto mv
-        (.visitInsn Opcodes/DUP)
-        (.visitVarInsn Opcodes/ISTORE (int (first args)))))
-    
-  ;; language 1 starts here
+
+  ;; compiler chain (language 1)
     ;;count and return the number of arguments
     (defn nb-args[ast]
       (inc (instaparse.core/transform (assoc (replace-vals
@@ -258,50 +362,59 @@
       (instaparse.core/transform {:argument #(Integer/parseInt %)} ast))
 
     (defn lang1-compiler-chain[class-name ast]
-      (let[n-args (nb-args ast)
+      (let[n-args (nb-args ast) ;NOTE:calculate the argumenumber from scratch 
           compiler (dispatching-bytecode-generating-eval n-args class-name lang0-compiling)]
+        (->> ast args->varnum (to-numeric-vars n-args) compiler)))
+    (defn lang-if-compiler-chain[class-name ast]
+      (let[n-args (nb-args ast) ;NOTE:calculate the argumenumber from scratch 
+          compiler (dispatching-bytecode-generating-eval n-args class-name lang-if-compiling)]
         (->> ast args->varnum (to-numeric-vars n-args) compiler)))
 
 
 (defn -main [& args]
-  ;; language 0 test
-    ; (println (lang0-parser "a=1+1*3;b=a-2; a+b;"))
-    ; (def lang0-interpret (dynamic-eval (make-interpreting make-lang0-instr-interpreting {:_ret 0})))
-    ; (def lang0-interpret-test (->> "a=1+1*3;b=a-2; a=a+b;c;" lang0-parser lang0-interpret))
-    ; (println (lang0-interpret-test))
-
-    ;;to-numeric-vars and ast->instruction vec
-    ; (println (str (->> "a=1+1*3;b=2+a; a=a+b;c;" lang0-parser (to-numeric-vars 0))))
-    ; (println (str (->> "a=1+1*3;b=2+a; a=a+b;c;" lang0-parser (to-numeric-vars 0) (instaparse.core/transform lang0-compiling))))
-
-    ; (def lang0-compiler (dispatching-bytecode-generating-eval 0 "Lang0Compiler" lang0-compiling))
-    ; (def lang0-compiler-test (->> "a=1 + 3 * (-2 - 1);b= 0 - a; b=b-a;" lang0-parser (to-numeric-vars 0) lang0-compiler))
-    ; (println (lang0-compiler-test))
-
-  ; (def lang1-interpret (dynamic-eval-args make-lang1-instr-interpreting))
-  ; (def lang1-interpret-test (->> "a=%0;a + %1 *3;" lang1-parser lang1-interpret))
-  ; (println (lang1-interpret-test 2 3))
-  ; ; test of the nb-args function
-  ; (println (->> "a=%0;a + %1 *3;" lang1-parser nb-args))
-  ; (def lang1-compiler-test (->> "a=%0;a + %1 *3;" lang1-parser (lang1-compiler-chain "Lang1Compiler")))
-  ; (println (lang1-compiler-test 2 5))
-
   ;; lang-if
-  ; (println (lang1-parser "a=%0;a + %1 *3;" 2 3))
-  ; (insta/visualize (lang1-parser "a=%0;a + %1 *3;" 2 3) :output-file "resources/lang1parser.png" :options{:dpi 150})
+ 
   ; (insta/visualize (lang-if-parser "a=%0;a + %1 *3;if(1 +3 ) { d=100; };" 2 3) :output-file "resources/if1.png" :options{:dpi 150})
-  
-  ; (insta/visualize (lang-if-parser "a=%0;a + %1 *3;if( 0) { d=100; } else { 2;};" 2 3) :output-file "resources/if2.png" :options{:dpi 150})
-  (println (->> "a=%0;a + %1 *3;if( 0) { b=100; } else { 2;};" lang-if-parser (to-numeric-vars 0)))
-  
-  (def lang-if-interpret (dynamic-eval-args make-lang-if-instr-interpreting))
+  ; (pprint "results of parser + to-numeric-vars:")
+  ; (pprint (->> "if(c=1) { 100;20; a=4;a;}else{2;3;};" lang-if-parser (to-numeric-vars 0)))
+  ;"b=19;1+99;if(c=0) { 100;20; a=4;a;}else{2;3; if(1) {d=-3;1;} else{199;}; };"
+  ; (def parsed (lang-if-parser "if(c=1) { 100;20; a=4;a;}else{2;3;};"))
+  ; (def lang-if-interpret (dynamic-eval-args fuck-interpreter parsed 1 3))
+  ; (println lang-if-interpret)
 
-  (def lang-if-interpret-test (->> "a=%0;a + %1 *3 ; if(1 +3 ) { d=100;};" lang-if-parser lang-if-interpret))
-  (println (lang-if-interpret-test 2 3))
-  (def lang-if-else-interpret-test (->> "a=0;a + 1 *3;b=4 ; if(c=0) { d=100/b ;}else{2;};" lang-if-parser lang-if-interpret))
-  (println (lang-if-else-interpret-test))
+  (def parsed-if-else (lang-if-parser "if (0) {1; 2;}else{3+4;};"))
+  (def parsed-if (lang-if-parser "3; 1; if (1-1) {1; 2;};"))
+  (def parsed-while-1 (lang-if-parser "a=1; b= a+2; c=while(a-3){a=a+1;b=b+2;}; c+1;"))
+  (def parsed-while-2 (lang-if-parser "a=1; b= a+2; c=while(a-1){a=a+1;b=b+2;}; c+1;"))
+  (def parsed-for-1 (lang-if-parser "a=0; b=for(c=a+1; c-10; c=c+1){a=2*c;}; b+c;"))
+  (def parsed-for-2 (lang-if-parser "a=0; b=for(c=a+1; c-1; c=c+1){a=2*c;}; b+c;"))
 
-  (println (->> "a=0;a + 1 *3;b=4 ; if(c=0) { d=100/b ;}else{2;};" lang-if-parser (to-numeric-vars 0) (instaparse.core/transform lang-if-compiling)))
-  ; test of the nb-args function
-  (println (->>  "a=0;a + 1 *3;b=4 ; if(c=0) { d=100/b ;}else{2;};" lang-if-parser nb-args))
+  (defn lang-if-interpret [parsed] (dynamic-eval-args fuck-interpreter parsed))
+
+  (println (lang-if-interpret parsed-if-else))
+  (println (lang-if-interpret parsed-if))
+  (println (lang-if-interpret parsed-while-1))
+  (println (lang-if-interpret parsed-while-2))
+  (println (lang-if-interpret parsed-for-1))
+  (println (lang-if-interpret parsed-for-2))
+  ;; compiling test
+  ; (pprint "compiling result")
+  ; (def parsed (->> "if ( 0 ) { 104;}else{20;3;};" lang-if-parser (to-numeric-vars 0)))
+  ; (def lang-if-before-generator (#(instaparse.core/transform lang-if-compiling %) parsed))
+  ; (pprint lang-if-before-generator)
+
+  ;; final if-compier test
+    ; (def lang-if-compiler-test-0
+      ; (let [prg "if ( 0 ) { 104;10;}else{20;3;};"] ;FIXME: t-case 和f-case的expr数量不一致就不行
+      ; (->> prg lang-if-parser (lang-if-compiler-chain "LangIfCompiler0"))))
+    ; (println (lang-if-compiler-test-0))
+    ;;test case in the instructions
+    ; (def lang-if-compiler-test-1
+    ;   (let [prg "if (0) {1; 2;}else{3+4;};"]
+    ;   (->> prg lang-if-parser (lang-if-compiler-chain "LangIfCompiler1"))))
+    ; (println (lang-if-compiler-test-1))
+    ; (def lang-if-compiler-test-2
+    ;   (let [prg "3; 1; if (1-1) {1; 2;};"]
+    ;   (->> prg lang-if-parser (lang-if-compiler-chain "LangIfCompiler2"))))
+    ; (println (lang-if-compiler-test-2))
 )
