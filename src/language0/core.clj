@@ -4,6 +4,7 @@
     (clojure.asm.commons Method GeneratorAdapter))
   (:gen-class)
 )
+(use 'clojure.walk)
 (use 'clojure.pprint) 
 ;; parser
   (def lang-if-parser; 
@@ -238,39 +239,81 @@
     ;; TODO: 1. updata compiling here 
     ;; FIXME: only support if call once I guess. Maybe it can name the label with a global counter?
     
-    (defn combine-ins [vec] 
-      (into [] (reduce concat (first vec) (rest vec)))
-    )
+    (defn combine-ins [vec] ;; transform instrs: ([[] []] [[]]) -> [[] [] []]
+      (into [] (reduce concat (first vec) (rest vec))))
     (defn split-case [cs]
        (let [mid (split-with notflag? cs)
              [:as t-case] (first mid)
              [:as f-case] (rest (second mid))]
         [(combine-ins t-case) (combine-ins f-case)]
        ))
-    
+    (defn isLoad [i-vec] ;operation that will add 1 interger in stack
+      (or (= i-vec [:loadi]) (= i-vec [:load]) (= i-vec [:duptop])))
+    (defn isNochange [i-vec] ;operation that won't change number of intergers
+      (or (= i-vec [:store]) (= i-vec [:goto]) (= i-vec [:label])))
+    (defn count-i [instr] ;return the number of interger in a stack for one branch
+      (let [clean-arg (walk (fn [i] [(first i)]) #(identity %) instr) ;delete argument
+            n-load (count (filter #(isLoad %) clean-arg))
+            n-op (count (filter #(not (or (isLoad %) (isNochange %))) clean-arg))
+          ]
+      (- n-load n-op)
+    ))
     (def lang-if-compiling
       (assoc lang0-compiling
             :if-flow 
-              (fn [condition t-case]
-                  (def to-end-if-else (new Label))
-                  (into [] (concat condition
-                    [[:ifeq to-end-if-else]] ;skip true case if ==zero
-                    t-case
-                    [[:label to-end-if-else]])))
+              (fn [condition & cases]
+                  (let [t-case (combine-ins cases)
+                        f-case [[:duptop]] ;NOTE: a fake false case, is it really no harm?
+                      compare (- (count-i t-case) (count-i f-case)) ]
+                    (def to-f-case (new Label))
+                    (def to-end-if-else (new Label))
+                    (def tdup (if (>= compare 0) nil (lazy-to-vec (repeat (- compare) [:duptop]))))
+                    (def fdup (if (>= 0 compare) nil (lazy-to-vec (repeat compare [:duptop]))))
+                    (into [] (concat condition
+                      [[:ifeq to-f-case]] ;skip true case if ==zero
+                      t-case tdup [[:goto to-end-if-else]]
+                      [[:label to-f-case]] f-case fdup
+                      [[:label to-end-if-else]]))));skip false case if execute true case
             :if-else-flow
               (fn [condition & both]
-                (let [[t-case f-case] (split-case both)]
+                (let [[t-case f-case] (split-case both)
+                      compare (- (count-i t-case) (count-i f-case)) ]
+                  ; (pprint "compare result:")
+                  ; (pprint compare)
                   (def to-f-case (new Label))
-                  (def to-end-if-else (new Label))
+                  (def to-end-if-else (new Label)) ;NOTE: make sure the number of variables same in different branches
+                  (def tdup (if (>= compare 0) nil (lazy-to-vec (repeat (- compare) [:duptop]))))
+                  (def fdup (if (>= 0 compare) nil (lazy-to-vec (repeat compare [:duptop]))))
+                  ; (pprint tdup)
+                  (pprint "t-case if-else")
+                  (pprint t-case)
                   (into [] (concat condition
                     [[:ifeq to-f-case]] ;skip true case if ==zero
-                    t-case [[:goto to-end-if-else]] 
-                    [[:label to-f-case]] f-case
+                    t-case tdup [[:goto to-end-if-else]]
+                    [[:label to-f-case]] f-case fdup
                     [[:label to-end-if-else]]));skip false case if execute true case
                 )
 
               ) 
       ))
+    (def lang-while-compiling
+      (assoc lang-if-compiling
+      :while-flow 
+        (fn [condition & cases] 
+            (let [t-case (combine-ins cases)
+                  f-case [[:duptop]]
+                  compare (- (count-i t-case) (count-i f-case))
+                  to-f-case (new Label)
+                  run-again (new Label)
+                  to-end-if-else (new Label)
+            ]
+            (into [] (concat 
+              condition [[:ifeq to-f-case]]
+              [:label run-agian]
+              t-case
+              condition [[:ifeq run-again]]
+            ))))
+    ))
 
 
   ;; generate byte code
@@ -311,8 +354,12 @@
     (defmethod generate-instr :label [mv [instr & args]]
       (doto mv
         (.visitLabel (first args))
-        (.visitFrame 0 0 nil 0 nil)
+        ; (.visitFrame 0 0 nil 0 nil)
       ))
+    (defmethod generate-instr :duptop [mv [instr & args]]
+      (doto mv
+        (.visitInsn Opcodes/DUP)      
+    ))
     ; (defn insert-label)
     ;; create a compiler that will take an ast as argument
     ;; and return the function created with compiled
@@ -382,39 +429,38 @@
   ; (def lang-if-interpret (dynamic-eval-args fuck-interpreter parsed 1 3))
   ; (println lang-if-interpret)
 
-  (def parsed-if-else (lang-if-parser "if (0) {1; 2;}else{3+4;};"))
-  (def parsed-if (lang-if-parser "3; 1; if (1-1) {1; 2;};"))
-  (def parsed-while-1 (lang-if-parser "a=1; b= a+2; c=while(a-3){a=a+1;b=b+2;}; c+1;"))
-  (def parsed-while-2 (lang-if-parser "a=1; b= a+2; c=while(a-1){a=a+1;b=b+2;}; c+1;"))
-  (def parsed-for-1 (lang-if-parser "a=0; b=for(c=a+1; c-10; c=c+1){a=2*c;}; b+c;"))
-  (def parsed-for-2 (lang-if-parser "a=0; b=for(c=a+1; c-1; c=c+1){a=2*c;}; b+c;"))
+  ;; interpreter test
+    ; (def parsed-if-else (lang-if-parser "if (0) {1; 2;}else{3+4;};"))
+    ; (def parsed-if (lang-if-parser "3; 1; if (1-1) {1; 2;};"))
+    ; (def parsed-while-1 (lang-if-parser "a=1; b= a+2; c=while(a-3){a=a+1;b=b+2;}; c+1;"))
+    ; (def parsed-while-2 (lang-if-parser "a=1; b= a+2; c=while(a-1){a=a+1;b=b+2;}; c+1;"))
+    ; (def parsed-for-1 (lang-if-parser "a=0; b=for(c=a+1; c-10; c=c+1){a=2*c;}; b+c;"))
+    ; (def parsed-for-2 (lang-if-parser "a=0; b=for(c=a+1; c-1; c=c+1){a=2*c;}; b+c;"))
 
-  (defn lang-if-interpret [parsed] (dynamic-eval-args fuck-interpreter parsed))
+    ; (defn lang-if-interpret [parsed] (dynamic-eval-args fuck-interpreter parsed))
 
-  (println (lang-if-interpret parsed-if-else))
-  (println (lang-if-interpret parsed-if))
-  (println (lang-if-interpret parsed-while-1))
-  (println (lang-if-interpret parsed-while-2))
-  (println (lang-if-interpret parsed-for-1))
-  (println (lang-if-interpret parsed-for-2))
+    ; (println (lang-if-interpret parsed-if-else))
+    ; (println (lang-if-interpret parsed-if))
+    ; (println (lang-if-interpret parsed-while-1))
+    ; (println (lang-if-interpret parsed-while-2))
+    ; (println (lang-if-interpret parsed-for-1))
+    ; (println (lang-if-interpret parsed-for-2))
+
   ;; compiling test
-  ; (pprint "compiling result")
-  ; (def parsed (->> "if ( 0 ) { 104;}else{20;3;};" lang-if-parser (to-numeric-vars 0)))
-  ; (def lang-if-before-generator (#(instaparse.core/transform lang-if-compiling %) parsed))
-  ; (pprint lang-if-before-generator)
+  ;"b=1-2*9+10;a=10; c=999; if ( b ) { a+1;b;}else{1;};c;"
+  ; "b=1-2*9+10;if ( b ) { 1;}; c=999;c=9;"
+  (def if-prog "b=1-2*9+10;if ( b ) { 1;b+1;}; c=999;c=9;")
+
+  ; (pprint (->> if-prog lang-if-parser))
+
+  (pprint "compiling result")
+  (def parsed (->> if-prog lang-if-parser (to-numeric-vars 0)))
+  (def lang-if-before-generator (#(instaparse.core/transform lang-if-compiling %) parsed))
+  (pprint lang-if-before-generator)
 
   ;; final if-compier test
-    ; (def lang-if-compiler-test-0
-      ; (let [prg "if ( 0 ) { 104;10;}else{20;3;};"] ;FIXME: t-case 和f-case的expr数量不一致就不行
-      ; (->> prg lang-if-parser (lang-if-compiler-chain "LangIfCompiler0"))))
-    ; (println (lang-if-compiler-test-0))
-    ;;test case in the instructions
-    ; (def lang-if-compiler-test-1
-    ;   (let [prg "if (0) {1; 2;}else{3+4;};"]
-    ;   (->> prg lang-if-parser (lang-if-compiler-chain "LangIfCompiler1"))))
-    ; (println (lang-if-compiler-test-1))
-    ; (def lang-if-compiler-test-2
-    ;   (let [prg "3; 1; if (1-1) {1; 2;};"]
-    ;   (->> prg lang-if-parser (lang-if-compiler-chain "LangIfCompiler2"))))
-    ; (println (lang-if-compiler-test-2))
+    (def lang-if-compiler-test-0
+       ;FIXME: t-case 和f-case的expr数量不一致就不行
+      (->> if-prog lang-if-parser (lang-if-compiler-chain "LangIfCompiler0")))
+    (println (lang-if-compiler-test-0))
 )
