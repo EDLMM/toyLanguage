@@ -12,14 +12,14 @@
     "prog = (expr-space)*        
         flag= spaces
 
-        if-flow = spaces <'if'> condition true-case spaces
-        if-else-flow = spaces <'if'> condition true-case flag false-case spaces
+        if-flow = spaces <'if'> spaces condition spaces true-case spaces
+        if-else-flow = spaces <'if'> spaces condition spaces true-case flag false-case spaces
         <condition> = spaces <'('> spaces expr spaces <')'> spaces
         <true-case> = spaces <'{'> (expr-space)* <'}'> spaces
         <false-case> = spaces <'else'> spaces <'{'> (expr-space)* <'}'> spaces
 
-        while-flow=spaces <'while'> condition true-case spaces
-        for-flow = spaces <'for'> for-condition true-case spaces
+        while-flow=spaces <'while'> spaces condition spaces true-case spaces
+        for-flow = spaces <'for'> spaces for-condition spaces true-case spaces
         <for-condition>= spaces <'('> spaces assig spaces <';'> spaces expr spaces <';'> spaces assig spaces <')'> spaces
 
         <expr-space> = spaces expr spaces <';'> spaces
@@ -111,50 +111,50 @@
           ]
       [update-env choice]))
   ; (defn )
-  (defn fuck-interpreter [env instr]
+  (defn toy-interpreter [env instr]
     ; (pprint instr)
     (let [c (str (first instr))
           update-env (case c
             ":assig" (let [{stack-ret :_ret} env
-                          {varname :_ret} (fuck-interpreter env (second instr))
-                          value-env (fuck-interpreter env (get instr 2))
+                          {varname :_ret} (toy-interpreter env (second instr))
+                          value-env (toy-interpreter env (get instr 2))
                           update-env (assoc value-env varname (:_ret value-env))]
                         update-env
                       )
             ":only-assig" (let [{stack-ret :_ret} env
-                          {varname :_ret} (fuck-interpreter env (second instr))
-                          value-env (fuck-interpreter env (get instr 2))
+                          {varname :_ret} (toy-interpreter env (second instr))
+                          value-env (toy-interpreter env (get instr 2))
                           update-env (assoc value-env varname (:_ret value-env))]
                         (assoc update-env :_ret stack-ret)
                       )
             
             ":if-else-flow" (let [[ifelse-env choice] (get-if-else-choice env instr)]
-                              (reduce fuck-interpreter ifelse-env choice))
+                              (reduce toy-interpreter ifelse-env choice))
             ":if-flow" (let [[if-env choice] (get-if-choice env instr)]
-                              (reduce fuck-interpreter if-env choice))
+                              (reduce toy-interpreter if-env choice))
             ":while-flow" (let [condition (get instr 1)
                                 iterations (lazy-to-vec (nthrest instr 2))
-                                env (fuck-interpreter env [:number "0"])
+                                env (toy-interpreter env [:number "0"])
                                 aa (condition-eval env condition)]
                             (loop [[isRun update-env] aa]
                               (if (not isRun)
                                 update-env
-                                (recur (condition-eval (reduce fuck-interpreter update-env iterations) condition)))                                     
+                                (recur (condition-eval (reduce toy-interpreter update-env iterations) condition)))                                     
                               ))
             ":for-flow" (let [init-assig (get instr 1)
-                              init-env (fuck-interpreter env init-assig)
+                              init-env (toy-interpreter env init-assig)
                               condition (get instr 2)
                               var-update (insta/transform {:assig (fn [& args] (lazy-to-vec (concat [:only-assig] (lazy-to-vec args))))} (get instr 3))
                               iterations (lazy-to-vec (nthrest instr 4))
                               ivi (lazy-to-vec (concat iterations [var-update]))                                                                                
-                              env (fuck-interpreter init-env [:number "0"])
+                              env (toy-interpreter init-env [:number "0"])
                               aa (condition-eval env condition)]
                           ; (pprint test-update)
-                          ; (pprint (reduce fuck-interpreter env [test-update]))
+                          ; (pprint (reduce toy-interpreter env [test-update]))
                           (loop [[isRun pre-env] aa]
                             (if (not isRun)
                               pre-env
-                              (recur (condition-eval (reduce fuck-interpreter (reduce fuck-interpreter pre-env iterations) ivi) condition)
+                              (recur (condition-eval (reduce toy-interpreter (reduce toy-interpreter pre-env iterations) ivi) condition)
                             ))                   
                         ))
             (subcase-eval env [instr])) ;TODO: 最后再给while 加默认值
@@ -175,7 +175,7 @@
       ; (pprint "--------information-------")
       ; (pprint "end result:")
       (def init-env {:_ret 999})
-      (def final-env (reduce fuck-interpreter init-env sentences))
+      (def final-env (reduce toy-interpreter init-env sentences))
       ; (pprint final-env)
       (:_ret final-env)
     )
@@ -202,6 +202,7 @@
             (.endMethod))
           (doto (.visitMethod cw (+ Opcodes/ACC_PUBLIC Opcodes/ACC_STATIC) meth-name meth-sig nil nil )
             (.visitCode)
+            ; (.visitVarInsn Opcodes/ALOAD 0) ;FIXME: 记得删掉这个
             (bytecode-generator)
             (.visitMaxs 0 0 )
             (.visitEnd))
@@ -293,7 +294,6 @@
                     [[:label to-f-case]] f-case fdup
                     [[:label to-end-if-else]]));skip false case if execute true case
                 )
-
               ) 
       ))
     (def lang-while-compiling
@@ -302,16 +302,20 @@
         (fn [condition & cases] 
             (let [t-case (combine-ins cases)
                   f-case [[:duptop]]
-                  compare (- (count-i t-case) (count-i f-case))
                   to-f-case (new Label)
-                  run-again (new Label)
-                  to-end-if-else (new Label)
+                  run-again (new Label)  
+                  compare (- (+ (count-i t-case) (count-i condition)) (count-i f-case))
+                  tdup (if (>= compare 0) nil (lazy-to-vec (repeat (- compare) [:duptop])))
+                  fdup (if (>= 0 compare) nil (lazy-to-vec (repeat (+ compare) [:duptop])))
             ]
-            (into [] (concat 
+
+            ; (pprint "n-t n-f:")
+            ; (pprint [ (+ (count-i t-case) (count-i condition)) (count-i f-case)])
+            ; (pprint "------------")
+            (into [] (concat [[:label run-again]]
               condition [[:ifeq to-f-case]]
-              [:label run-agian]
-              t-case
-              condition [[:ifeq run-again]]
+              t-case tdup [[:goto run-again]]
+              [[:label to-f-case]] f-case fdup
             ))))
     ))
 
@@ -360,13 +364,15 @@
       (doto mv
         (.visitInsn Opcodes/DUP)      
     ))
-    ; (defn insert-label)
+    (defmethod generate-instr :ifne [mv [instr & args]]
+      (doto mv
+      (.visitJumpInsn Opcodes/IFNE (first args))))
+
     ;; create a compiler that will take an ast as argument
     ;; and return the function created with compiled
     (defn dispatching-bytecode-generating-eval [n-args class-name compiling]
       (fn[ast]
         (let[instrs (instaparse.core/transform compiling ast);call compiling to transform parsed program
-            ;FIXME: ADD insert LABEL HERE
             generate-prog (fn[mv] (reduce generate-instr mv instrs))]
           (compiled n-args class-name generate-prog))))
 
@@ -387,7 +393,7 @@
                     ;;FIXME: change the compiling here
                     ;;every time add new flow control
                     ;;or the varname will not be replace
-                    lang-if-compiling
+                    lang-while-compiling
                     (fn[& instrs] (apply clojure.set/union (filter set? instrs))))
               :varname (fn [varname] #{varname}) ;; use :varname to get all the varname values with map destructing
             )
@@ -414,7 +420,7 @@
         (->> ast args->varnum (to-numeric-vars n-args) compiler)))
     (defn lang-if-compiler-chain[class-name ast]
       (let[n-args (nb-args ast) ;NOTE:calculate the argumenumber from scratch 
-          compiler (dispatching-bytecode-generating-eval n-args class-name lang-if-compiling)]
+          compiler (dispatching-bytecode-generating-eval n-args class-name lang-while-compiling)]
         (->> ast args->varnum (to-numeric-vars n-args) compiler)))
 
 
@@ -426,7 +432,7 @@
   ; (pprint (->> "if(c=1) { 100;20; a=4;a;}else{2;3;};" lang-if-parser (to-numeric-vars 0)))
   ;"b=19;1+99;if(c=0) { 100;20; a=4;a;}else{2;3; if(1) {d=-3;1;} else{199;}; };"
   ; (def parsed (lang-if-parser "if(c=1) { 100;20; a=4;a;}else{2;3;};"))
-  ; (def lang-if-interpret (dynamic-eval-args fuck-interpreter parsed 1 3))
+  ; (def lang-if-interpret (dynamic-eval-args toy-interpreter parsed 1 3))
   ; (println lang-if-interpret)
 
   ;; interpreter test
@@ -437,7 +443,7 @@
     ; (def parsed-for-1 (lang-if-parser "a=0; b=for(c=a+1; c-10; c=c+1){a=2*c;}; b+c;"))
     ; (def parsed-for-2 (lang-if-parser "a=0; b=for(c=a+1; c-1; c=c+1){a=2*c;}; b+c;"))
 
-    ; (defn lang-if-interpret [parsed] (dynamic-eval-args fuck-interpreter parsed))
+    ; (defn lang-if-interpret [parsed] (dynamic-eval-args toy-interpreter parsed))
 
     ; (println (lang-if-interpret parsed-if-else))
     ; (println (lang-if-interpret parsed-if))
@@ -447,20 +453,22 @@
     ; (println (lang-if-interpret parsed-for-2))
 
   ;; compiling test
-  ;"b=1-2*9+10;a=10; c=999; if ( b ) { a+1;b;}else{1;};c;"
-  ; "b=1-2*9+10;if ( b ) { 1;}; c=999;c=9;"
-  (def if-prog "b=1-2*9+10;if ( b ) { 1;b+1;}; c=999;c=9;")
+  ;"b=1-2*9+10;a=10; c=999; if ( b ) { a=4;a+1;b;}else{1;};c;"
+  ; "b=1-2*9+10;if ( b ) { 1;b+1;}; c=999;c=9;"
+  ;"a=10; while (0){a-1;13;a*2;}; 10;"
+  (def while-prog "10;a=10; while (0){a-1;13;a*2;}; 10;")
+  
 
   ; (pprint (->> if-prog lang-if-parser))
 
-  (pprint "compiling result")
-  (def parsed (->> if-prog lang-if-parser (to-numeric-vars 0)))
-  (def lang-if-before-generator (#(instaparse.core/transform lang-if-compiling %) parsed))
+  (pprint "compiling result:")
+  (def parsed (->> while-prog lang-if-parser (to-numeric-vars 0)))
+  (def lang-if-before-generator (#(instaparse.core/transform lang-while-compiling %) parsed))
   (pprint lang-if-before-generator)
 
   ;; final if-compier test
+  (pprint "generating bytecode:")
     (def lang-if-compiler-test-0
-       ;FIXME: t-case 和f-case的expr数量不一致就不行
-      (->> if-prog lang-if-parser (lang-if-compiler-chain "LangIfCompiler0")))
+      (->> while-prog lang-if-parser (lang-if-compiler-chain "LangIfCompiler0")))
     (println (lang-if-compiler-test-0))
 )
