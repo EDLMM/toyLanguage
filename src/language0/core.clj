@@ -55,12 +55,10 @@
     :varget (fn [{varname :_ret :as env1}]
               (assoc env1 :_ret (varname env1)))})
   ;;NOTE: update for language 1 here
-  ;; update the tranformation map  
   (defn make-lang1-interpreter [env]
     (assoc (make-lang0-interpreter env)
           :argument #(assoc env :_ret (keyword (str "%" %)))))
-  ;;FIXME: add while and for case
-  ;; add if flow control for the transformation map
+  ;; NOTE: condition evaluation: not change the :_reti
   (defn condition-eval [env sentence]
       (let [{stack-ret :_ret} env
             update-env (instaparse.core/transform (make-lang1-interpreter env) sentence)
@@ -68,22 +66,15 @@
             update-env (assoc update-env :_ret stack-ret)]
           [(not= cr 0) update-env]
     ))
+  ;; evaluate the result of expressions in subcases
   (defn subcase-eval [env sentences] 
-    ; (pprint "subcase env:")
-    ; (pprint env)
-    ; (pprint "subcase instr:")
-    ; (pprint sentences)
-    ; (pprint "----------") 
       (let [update-env 
             (reduce 
               (fn [env instr] (instaparse.core/transform (make-lang1-interpreter env) instr))
               env
-              sentences
-            )]
-      ; (pprint "subcase output:")
-      ; (pprint update-env)
-      update-env))
-  ;;use to split the cases
+              sentences)]
+        update-env))
+  ;;use to split the cases in if-esle with flag
     (defn notflag? [vec]
       (if (not= vec [:flag]) true false))
     (defn lazy-to-vec [lz]
@@ -107,12 +98,10 @@
           condition (first cases)
           [notjump update-env] (condition-eval env condition)
           [t f] (in-split (rest cases))
-          choice (lazy-to-vec (if notjump t f))
-          ]
+          choice (lazy-to-vec (if notjump t f))]
       [update-env choice]))
-  ; (defn )
+
   (defn toy-interpreter [env instr]
-    ; (pprint instr)
     (let [c (str (first instr))
           update-env (case c
             ":assig" (let [{stack-ret :_ret} env
@@ -182,7 +171,7 @@
 
 ;; compiler
   ;; import asm package and generate
-    ;; NOTE: blackbox here
+    ;; NOTE: many blackbox here, an implementation of ASM package
     (import '(clojure.asm Opcodes Type Label ClassWriter));;NOTE: add Label import here
     (import '(clojure.asm.commons Method GeneratorAdapter))
     (defn compiled [n-args class-name bytecode-generator]
@@ -202,7 +191,6 @@
             (.endMethod))
           (doto (.visitMethod cw (+ Opcodes/ACC_PUBLIC Opcodes/ACC_STATIC) meth-name meth-sig nil nil )
             (.visitCode)
-            ; (.visitVarInsn Opcodes/ALOAD 0) ;FIXME: 记得删掉这个
             (bytecode-generator)
             (.visitMaxs 0 0 )
             (.visitEnd))
@@ -215,8 +203,7 @@
           (fn [& args] (clojure.lang.Reflector/invokeStaticMethod class-name meth-name (into-array args))))
         )
   ;; arith compiling
-    ;; ast -> vector
-    ;; use to concatenate the transform rules
+    ;; ast -> vector: use to concatenate the transform rules
     (defn assoc-binary-op [m [op instr]]
       (let[binary-op-compiling (fn[op]
                                 (fn[instrs-v0 instrs-v1]
@@ -237,10 +224,9 @@
             :assig (fn[var instrs](conj instrs [:store var]))))
    
   ;; language if-else compiling
-    ;; TODO: 1. updata compiling here 
     ;; FIXME: only support if call once I guess. Maybe it can name the label with a global counter?
-    
-    (defn combine-ins [vec] ;; transform instrs: ([[] []] [[]]) -> [[] [] []]
+    ;; transform instrs: ([[] []] [[]]) -> [[] [] []]
+    (defn combine-ins [vec] 
       (into [] (reduce concat (first vec) (rest vec))))
     (defn split-case [cs]
        (let [mid (split-with notflag? cs)
@@ -265,11 +251,13 @@
               (fn [condition & cases]
                   (let [t-case (combine-ins cases)
                         f-case [[:duptop]] ;NOTE: a fake false case, is it really no harm?
-                      compare (- (count-i t-case) (count-i f-case)) ]
-                    (def to-f-case (new Label))
-                    (def to-end-if-else (new Label))
-                    (def tdup (if (>= compare 0) nil (lazy-to-vec (repeat (- compare) [:duptop]))))
-                    (def fdup (if (>= 0 compare) nil (lazy-to-vec (repeat compare [:duptop]))))
+                        compare (- (count-i t-case) (count-i f-case)) 
+                        to-f-case (new Label)
+                        to-end-if-else (new Label)
+                        tdup (if (>= compare 0) nil (lazy-to-vec (repeat (- compare) [:duptop])))
+                        fdup (if (>= 0 compare) nil (lazy-to-vec (repeat compare [:duptop])))
+                      ]
+                   
                     (into [] (concat condition
                       [[:ifeq to-f-case]] ;skip true case if ==zero
                       t-case tdup [[:goto to-end-if-else]]
@@ -278,16 +266,14 @@
             :if-else-flow
               (fn [condition & both]
                 (let [[t-case f-case] (split-case both)
-                      compare (- (count-i t-case) (count-i f-case)) ]
-                  ; (pprint "compare result:")
-                  ; (pprint compare)
-                  (def to-f-case (new Label))
-                  (def to-end-if-else (new Label)) ;NOTE: make sure the number of variables same in different branches
-                  (def tdup (if (>= compare 0) nil (lazy-to-vec (repeat (- compare) [:duptop]))))
-                  (def fdup (if (>= 0 compare) nil (lazy-to-vec (repeat compare [:duptop]))))
-                  ; (pprint tdup)
-                  (pprint "t-case if-else")
-                  (pprint t-case)
+                      compare (- (count-i t-case) (count-i f-case)) 
+                      to-f-case (new Label)
+                      to-end-if-else (new Label) ;NOTE: make sure the number of variables same in different branches
+                      tdup (if (>= compare 0) nil (lazy-to-vec (repeat (- compare) [:duptop])))
+                      fdup (if (>= 0 compare) nil (lazy-to-vec (repeat compare [:duptop])))
+                      ]
+                  ; (pprint "t-case if-else")
+                  ; (pprint t-case)
                   (into [] (concat condition
                     [[:ifeq to-f-case]] ;skip true case if ==zero
                     t-case tdup [[:goto to-end-if-else]]
@@ -429,42 +415,37 @@
  
   ; (insta/visualize (lang-if-parser "a=%0;a + %1 *3;if(1 +3 ) { d=100; };" 2 3) :output-file "resources/if1.png" :options{:dpi 150})
   ; (pprint "results of parser + to-numeric-vars:")
-  ; (pprint (->> "if(c=1) { 100;20; a=4;a;}else{2;3;};" lang-if-parser (to-numeric-vars 0)))
-  ;"b=19;1+99;if(c=0) { 100;20; a=4;a;}else{2;3; if(1) {d=-3;1;} else{199;}; };"
-  ; (def parsed (lang-if-parser "if(c=1) { 100;20; a=4;a;}else{2;3;};"))
-  ; (def lang-if-interpret (dynamic-eval-args toy-interpreter parsed 1 3))
-  ; (println lang-if-interpret)
 
   ;; interpreter test
-    ; (def parsed-if-else (lang-if-parser "if (0) {1; 2;}else{3+4;};"))
-    ; (def parsed-if (lang-if-parser "3; 1; if (1-1) {1; 2;};"))
-    ; (def parsed-while-1 (lang-if-parser "a=1; b= a+2; c=while(a-3){a=a+1;b=b+2;}; c+1;"))
-    ; (def parsed-while-2 (lang-if-parser "a=1; b= a+2; c=while(a-1){a=a+1;b=b+2;}; c+1;"))
-    ; (def parsed-for-1 (lang-if-parser "a=0; b=for(c=a+1; c-10; c=c+1){a=2*c;}; b+c;"))
-    ; (def parsed-for-2 (lang-if-parser "a=0; b=for(c=a+1; c-1; c=c+1){a=2*c;}; b+c;"))
+    (def parsed-if-else (lang-if-parser "if (0) {1; 2;}else{3+4;};"))
+    (def parsed-if (lang-if-parser "3; 1; if (1-1) {1; 2;};"))
+    (def parsed-while-1 (lang-if-parser "a=1; b= a+2; c=while(a-3){a=a+1;b=b+2;}; c+1;"))
+    (def parsed-while-2 (lang-if-parser "a=1; b= a+2; c=while(a-1){a=a+1;b=b+2;}; c+1;"))
+    (def parsed-for-1 (lang-if-parser "a=0; b=for(c=a+1; c-10; c=c+1){a=2*c;}; b+c;"))
+    (def parsed-for-2 (lang-if-parser "a=0; b=for(c=a+1; c-1; c=c+1){a=2*c;}; b+c;"))
 
-    ; (defn lang-if-interpret [parsed] (dynamic-eval-args toy-interpreter parsed))
+    (defn lang-if-interpret [parsed] (dynamic-eval-args toy-interpreter parsed))
 
-    ; (println (lang-if-interpret parsed-if-else))
-    ; (println (lang-if-interpret parsed-if))
-    ; (println (lang-if-interpret parsed-while-1))
-    ; (println (lang-if-interpret parsed-while-2))
-    ; (println (lang-if-interpret parsed-for-1))
-    ; (println (lang-if-interpret parsed-for-2))
+    (println (lang-if-interpret parsed-if-else))
+    (println (lang-if-interpret parsed-if))
+    (println (lang-if-interpret parsed-while-1))
+    (println (lang-if-interpret parsed-while-2))
+    (println (lang-if-interpret parsed-for-1))
+    (println (lang-if-interpret parsed-for-2))
 
-  ;; compiling test
+  ;; compiling test case
   ;"b=1-2*9+10;a=10; c=999; if ( b ) { a=4;a+1;b;}else{1;};c;"
   ; "b=1-2*9+10;if ( b ) { 1;b+1;}; c=999;c=9;"
   ;"a=10; while (0){a-1;13;a*2;}; 10;"
-  (def while-prog "10;a=10; while (0){a-1;13;a*2;}; 10;")
+  (def while-prog "b=1-2*9+10;a=10; c=999; d=if ( b ) { a=4;a+1;b;}else{1;};c+d;")
   
 
   ; (pprint (->> if-prog lang-if-parser))
 
-  (pprint "compiling result:")
-  (def parsed (->> while-prog lang-if-parser (to-numeric-vars 0)))
-  (def lang-if-before-generator (#(instaparse.core/transform lang-while-compiling %) parsed))
-  (pprint lang-if-before-generator)
+  ; (pprint "compiling result:")
+  ; (def parsed (->> while-prog lang-if-parser (to-numeric-vars 0)))
+  ; (def lang-if-before-generator (#(instaparse.core/transform lang-while-compiling %) parsed))
+  ; (pprint lang-if-before-generator)
 
   ;; final if-compier test
   (pprint "generating bytecode:")

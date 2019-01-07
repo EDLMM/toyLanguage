@@ -4,13 +4,12 @@ A toy language for homework project, based on Clojure language.
 
 Here instapasre and ASM pacakge are used.
 
-## Usage
+The parser will build an AST for the program content.
 
-FIXME
+The interpreters for if,while and for flow control are finished.
 
-## License
+The compiler of if-case is finished.
 
-Copyright © 2018 FIXME
+## Fixme
 
-Distributed under the Eclipse Public License either version 1.0 or (at
-your option) any later version.
+In the compiler part, the while-case does not work because of the ASM feature missing. However, the if-case works normally.
