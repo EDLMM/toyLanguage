@@ -411,33 +411,54 @@
 
 
 (defn -main [& args]
+  (println "print \"I\" to use interpreter, \"C\" for compiler:")
+  (def cinput (read-line))
+  (if (= cinput "C")
+    (println "Running compiler, please input the content:")
+    (println "Running interpreter, please input the content:"))
+
+  (def pg_input (read-line))
+  ; for compiler only------------
+  (if (= cinput "C")
+    (def lang-if-compiler-test-0
+      (->> pg_input lang-if-parser (lang-if-compiler-chain "LangIfCompiler0")))
+  )
+  ; for interpreter only------------
+  (def parsed-pg (lang-if-parser pg_input))
+  (defn lang-if-interpret [parsed] (dynamic-eval-args toy-interpreter parsed))
+  ; ;-----------
+  (println "The evaluation result is:")
+  (if (= cinput "C")
+    (println (lang-if-compiler-test-0)))
+  (if (= cinput "I")
+    (println (lang-if-interpret (doall parsed-pg))))
   ;; lang-if
  
-  ; (insta/visualize (lang-if-parser "a=%0;a + %1 *3;if(1 +3 ) { d=100; };" 2 3) :output-file "resources/if1.png" :options{:dpi 150})
+  ; (insta/visualize (lang-if-parser "a=%0;a + %1 *3;if(1 +3 ) { d=100; };" 2 3) :output-file "resources/parsed.png" :options{:dpi 150})
   ; (pprint "results of parser + to-numeric-vars:")
 
   ;; interpreter test
-    (def parsed-if-else (lang-if-parser "if (0) {1; 2;}else{3+4;};"))
-    (def parsed-if (lang-if-parser "3; 1; if (1-1) {1; 2;};"))
-    (def parsed-while-1 (lang-if-parser "a=1; b= a+2; c=while(a-3){a=a+1;b=b+2;}; c+1;"))
-    (def parsed-while-2 (lang-if-parser "a=1; b= a+2; c=while(a-1){a=a+1;b=b+2;}; c+1;"))
-    (def parsed-for-1 (lang-if-parser "a=0; b=for(c=a+1; c-10; c=c+1){a=2*c;}; b+c;"))
-    (def parsed-for-2 (lang-if-parser "a=0; b=for(c=a+1; c-1; c=c+1){a=2*c;}; b+c;"))
+    ; (def parsed-if-else (lang-if-parser "if (0) {1; 2;}else{3+4;};"))
+    ; (def parsed-if (lang-if-parser "3; 1; if (1-1) {1; 2;};"))
+    ; (def parsed-while-1 (lang-if-parser "a=1; b= a+2; c=while(a-3){a=a+1;b=b+2;}; c+1;"))
+    ; (def parsed-while-2 (lang-if-parser "a=1; b= a+2; c=while(a-1){a=a+1;b=b+2;}; c+1;"))
+    ; (def parsed-for-1 (lang-if-parser "a=0; b=for(c=a+1; c-10; c=c+1){a=2*c;}; b+c;"))
+    ; (def parsed-for-2 (lang-if-parser "a=0; b=for(c=a+1; c-1; c=c+1){a=2*c;}; b+c;"))
 
-    (defn lang-if-interpret [parsed] (dynamic-eval-args toy-interpreter parsed))
+    ; (defn lang-if-interpret [parsed] (dynamic-eval-args toy-interpreter parsed))
 
-    (println (lang-if-interpret parsed-if-else))
-    (println (lang-if-interpret parsed-if))
-    (println (lang-if-interpret parsed-while-1))
-    (println (lang-if-interpret parsed-while-2))
-    (println (lang-if-interpret parsed-for-1))
-    (println (lang-if-interpret parsed-for-2))
+    ; (println (lang-if-interpret parsed-if-else))
+    ; (println (lang-if-interpret parsed-if))
+    ; (println (lang-if-interpret parsed-while-1))
+    ; (println (lang-if-interpret parsed-while-2))
+    ; (println (lang-if-interpret parsed-for-1))
+    ; (println (lang-if-interpret parsed-for-2))
 
   ;; compiling test case
   ;"b=1-2*9+10;a=10; c=999; if ( b ) { a=4;a+1;b;}else{1;};c;"
   ; "b=1-2*9+10;if ( b ) { 1;b+1;}; c=999;c=9;"
   ;"a=10; while (0){a-1;13;a*2;}; 10;"
-  (def while-prog "b=1-2*9+10;a=10; c=999; d=if ( b ) { a=4;a+1;b;}else{1;};c+d;")
+  ; (def while-prog "b=1-2*9+10;a=10; c=999; d=if ( b ) { a=4;a+1;b;}else{1;};c+d;")
   
 
   ; (pprint (->> if-prog lang-if-parser))
@@ -448,8 +469,8 @@
   ; (pprint lang-if-before-generator)
 
   ;; final if-compier test
-  (pprint "generating bytecode:")
-    (def lang-if-compiler-test-0
-      (->> while-prog lang-if-parser (lang-if-compiler-chain "LangIfCompiler0")))
-    (println (lang-if-compiler-test-0))
+  ; (pprint "generating bytecode:")
+    ; (def lang-if-compiler-test-0
+      ; (->> while-prog lang-if-parser (lang-if-compiler-chain "LangIfCompiler0")))
+    ; (println (lang-if-compiler-test-0))
 )
